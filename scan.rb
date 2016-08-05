@@ -8,20 +8,11 @@ $POWER_MIN_THRESHOLD = 120000
 #counts as a "new" signal
 $POWER_CHANGE_THRESHOLD = 250000
 
-def scanTentativeChannels(lines)
-  lines
-    .select do |x|
-      #The tentative channels have 'chan' followed by a space
-      x.match(/^\tchan /) != nil
-    end
-    .map do |x|
-      fields = x.split(/\s+/)
-      { :channel => fields[2].to_i,
-        #:frequency => fields[3][1..-6].to_f,
-        :power => fields[5].to_f
-      }
-    end
-end
+#Path to kal command used for scanning
+$KAL_PATH = "./kalibrate-rtl/src/kal"
+
+#Frequency bands to scan
+$FREQUENCY_BANDS = ["GSM850"]
 
 def scanConfirmedChannels(lines)
   lines
@@ -32,39 +23,45 @@ def scanConfirmedChannels(lines)
     .map do |x|
       fields = x.split(/\s+/)
       { :channel => fields[2].to_i,
-        #:frequency => fields[3][1..-4].to_f,
         :power => fields[7].to_f
       }
     end
     .select do |x|
+      #Remove any signal weaker than our minimum threshold
       x[:power] >= $POWER_MIN_THRESHOLD
+    end
+    .uniq do |x|
+      #Ensure we dont have channels in there twice.
+      #This could happen if the script is configured to scan overlapping bands.
+      x[:channel]
     end
 end
 
 def runScan
-  input, _ = Open3.capture2e(
-    "./kalibrate-rtl/src/kal",
-    "-g", "50",
-    "-s", "GSM850",
-    "-t", "1",
-    "-vvv")
-  input
+  #Run a scan for each frequency band, combining the results
+  $FREQUENCY_BANDS
+    .map do |band|
+      input, _ = Open3.capture2e(
+        $KAL_PATH,
+        "-g", "50",
+        "-s", band,
+        "-t", "1",
+        "-vvv")
+      input
+    end
+    .join "\n"
 end
 
+#Find channels in the current set which either did not exist in the
+#previous set of channels, or has changed in power by an amount
+#greater than $POWER_CHANGE_THRESHOLD
 def diff(oldChannels, currentChannels)
   currentChannels
-    .map do |nc|
+    .select do |nc|
       oc = oldChannels.find do |x|
         x[:channel] == nc[:channel]
       end
-      if oc == nil || (oc[:power] - nc[:power]).abs >= $POWER_CHANGE_THRESHOLD
-        nc
-      else
-        nil
-      end
-    end
-    .select do |x|
-      x != nil
+      oc == nil || (oc[:power] - nc[:power]).abs >= $POWER_CHANGE_THRESHOLD
     end
 end
 
@@ -84,6 +81,7 @@ while true
   currentChannels = scanConfirmedChannels(runScan.lines)
   addedChannels = diff(oldChannels, currentChannels)
   removedChannels = diff(currentChannels, oldChannels)
+
   if addedChannels.length > 0 || removedChannels.length > 0
     puts "----------------------"
     puts "!! Removed Channels !!"
@@ -105,5 +103,6 @@ while true
   else
     puts "Scan done. No changes."
   end
+
   oldChannels = currentChannels
 end
