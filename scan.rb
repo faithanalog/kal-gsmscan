@@ -26,10 +26,6 @@ def scanConfirmedChannels(lines)
         :power => fields[7].to_f
       }
     end
-    .select do |x|
-      #Remove any signal weaker than our minimum threshold
-      x[:power] >= $POWER_MIN_THRESHOLD
-    end
     .uniq do |x|
       #Ensure we dont have channels in there twice.
       #This could happen if the script is configured to scan overlapping bands.
@@ -46,6 +42,7 @@ def runScan
         "-g", "50",
         "-s", band,
         "-t", "1",
+        "-p", $POWER_MIN_THRESHOLD.to_s,
         "-vvv")
       input
     end
